@@ -1,0 +1,33 @@
+syntax = "proto3";
+option go_package = "./;pb";
+
+message BlockSignature {
+  uint64 index = 1;
+  bytes strong = 2;
+  uint32 weak = 3;
+}
+
+message BlockOperation {
+  uint64 index = 1;
+  bytes data = 2;
+}
+
+message FileDescriptionInfo {
+  map<string, int32> info = 1;
+  message Info {
+    int32 attr = 2;
+    int64 size = 3;
+  }
+}
+
+message Payload {
+  int32 code = 1;
+  string msg = 2;
+  int32 type = 3;
+  optional string key = 7;
+  oneof data {
+    FileDescriptionInfo file = 4;
+    BlockOperation operation = 5;
+    BlockSignature signature = 6;
+  }
+}
