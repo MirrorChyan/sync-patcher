@@ -1,60 +1,37 @@
 package main
 
 import (
-	ws "github.com/gorilla/websocket"
-	"mirrorc-sync/internel/log"
+	"log"
+	h "mirrorc-sync/internel/hash"
+	. "mirrorc-sync/internel/log"
+	"mirrorc-sync/internel/shared"
 	"net/http"
+	_ "net/http/pprof"
 	"time"
 )
 
-var SOURCE = "source"
+const (
+	ServerAddr = ":5000"
+)
 
 func main() {
-	log.InitLogger()
-	http.HandleFunc("/ws", Sync)
+	go func() {
+		log.Println(http.ListenAndServe(":6060", nil))
+	}()
+	InitLogger()
+	h.StartHash()
+	defer h.EndHash()
 
-	log.Infoln("Start Server")
-	err := http.ListenAndServe(":5000", nil)
+	Log.Infoln("Start Server")
 
-	if err != nil {
-		log.Errorln("ListenAndServe: %v", err)
-	}
-}
-
-func Sync(w http.ResponseWriter, r *http.Request) {
-	if err := Auth(r); err != nil {
-		log.Warnln("Auth: %v", err)
-		return
-	}
-	var upgrader = &ws.Upgrader{
-		HandshakeTimeout: 0,
-		ReadBufferSize:   1024,
-		WriteBufferSize:  2048,
-		CheckOrigin:      func(r *http.Request) bool { return true },
-	}
-	conn, err := upgrader.Upgrade(w, r, w.Header())
-	defer func(c *ws.Conn) {
-		err = c.WriteControl(
-			ws.CloseMessage,
-			ws.FormatCloseMessage(ws.CloseNormalClosure, ""),
-			time.Now().Add(time.Second*5),
-		)
-		if err != nil {
-			log.Errorln("WriteControl error", err)
-		}
-		err := conn.Close()
-		if err != nil {
-			log.Errorln("Close error: ", err)
-		}
-
-	}(conn)
-	if err != nil {
-		log.Errorln("Upgrade error: ", err)
-		return
+	http.HandleFunc(shared.ApiPrefix, func(w http.ResponseWriter, r *http.Request) {
+		Log.Infoln("Sync Start")
+		ts := time.Now()
+		Sync(w, r)
+		Log.Infof("Sync End %v ms", time.Now().Sub(ts).Milliseconds())
+	})
+	if err := http.ListenAndServe(ServerAddr, nil); err != nil {
+		Log.Errorln("ListenAndServe: %v", err)
 	}
 
-	if err := HandleConnection(r, conn); err != nil {
-		log.Errorln("HandleConnection %v", err)
-
-	}
 }

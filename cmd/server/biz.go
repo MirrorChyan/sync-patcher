@@ -3,17 +3,24 @@ package main
 import (
 	"mirrorc-sync/internel/fs"
 	"mirrorc-sync/internel/pb"
-	"mirrorc-sync/internel/shared"
 )
 
-func GetResource(params *shared.Params) (*pb.FileDescriptionInfo, error) {
+func GetResource(source string) (*pb.FileDescriptionInfo, error) {
 
-	list, err := fs.CollectFileList(SOURCE)
+	list, err := fs.CollectFileList(source)
 	if err != nil {
 		return nil, err
 	}
 
+	var info = make(map[string]*pb.FileDescriptionInfo_Info)
+	for k, v := range list {
+		info[k] = &pb.FileDescriptionInfo_Info{
+			Attr:    v.Attr,
+			ModTime: v.ModTime,
+		}
+	}
+
 	return &pb.FileDescriptionInfo{
-		Info: list,
+		Info: info,
 	}, nil
 }

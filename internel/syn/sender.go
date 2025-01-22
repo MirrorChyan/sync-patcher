@@ -37,7 +37,7 @@ func LookUpTable(supplier func() (*BlockSignature, error)) (map[uint32][]BlockSi
 // so this function is expected to be called once the remote blocks map is fully populated.
 //
 // The caller must make sure the concrete reader instance is not nil or this function will panic.
-func Sync(r io.ReaderAt, shash hash.Hash, remote map[uint32][]BlockSignature, consumer func(*BlockOperation) error) error {
+func Sync(r io.ReaderAt, shash hash.Hash, remote map[uint32][]BlockSignature, consumer func(BlockOperation) error) error {
 	if r == nil {
 		return errors.New("reader required")
 	}
@@ -72,7 +72,7 @@ func Sync(r io.ReaderAt, shash hash.Hash, remote map[uint32][]BlockSignature, co
 		if len(remote) == 0 {
 			if n > 0 {
 				op := BlockOperation{Data: block}
-				if err := consumer(&op); err != nil {
+				if err := consumer(op); err != nil {
 					return err
 				}
 				offset += int64(n)
@@ -115,7 +115,7 @@ func Sync(r io.ReaderAt, shash hash.Hash, remote map[uint32][]BlockSignature, co
 				// instructs the server to copy block data at offset b.Index
 				// from its own copy of the file.
 				op := BlockOperation{Index: b.Index}
-				if err := consumer(&op); err != nil {
+				if err := consumer(op); err != nil {
 					return err
 				}
 				break
@@ -159,7 +159,7 @@ func Sync(r io.ReaderAt, shash hash.Hash, remote map[uint32][]BlockSignature, co
 
 // send sends all deltas over the channel. Any error is reported back using the
 // same channel.
-func send(r io.Reader, consumer func(*BlockOperation) error) error {
+func send(r io.Reader, consumer func(BlockOperation) error) error {
 	for {
 
 		bfp := bufferPool.Get().(*[]byte)
@@ -176,7 +176,7 @@ func send(r io.Reader, consumer func(*BlockOperation) error) error {
 		if n > 0 {
 			block := buffer[:n]
 			op := BlockOperation{Data: block}
-			if err := consumer(&op); err != nil {
+			if err := consumer(op); err != nil {
 				return err
 			}
 		}

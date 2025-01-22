@@ -5,8 +5,8 @@ import (
 	"errors"
 	"fmt"
 	ws "github.com/gorilla/websocket"
-	"github.com/segmentio/ksuid"
-	"mirrorc-sync/internel/log"
+	//h "mirrorc-sync/internel/hash"
+	. "mirrorc-sync/internel/log"
 	"mirrorc-sync/internel/pb"
 	. "mirrorc-sync/internel/shared"
 	"mirrorc-sync/internel/syn"
@@ -24,38 +24,69 @@ func GetParams(r *http.Request) *Params {
 	}
 }
 
-func Auth(r *http.Request) error {
-	params := GetParams(r)
-	log.Debugln("%v\n", params)
-	return nil
+func Sync(w http.ResponseWriter, r *http.Request) {
+	var (
+		source string
+		err    error
+	)
+	if source, err = Auth(r); err != nil {
+		Log.Warnln("Auth: %v", err)
+		return
+	}
+	u := &ws.Upgrader{
+		HandshakeTimeout: 0,
+		ReadBufferSize:   1024,
+		WriteBufferSize:  2048,
+		CheckOrigin:      func(r *http.Request) bool { return true },
+	}
+	conn, err := u.Upgrade(w, r, w.Header())
+	if err != nil {
+		Log.Errorln("Upgrade error: ", err)
+		return
+	}
+	defer func(c *ws.Conn) {
+		err := conn.Close()
+		if err != nil {
+			Log.Errorln("Server Conn Close error: ", err)
+		}
+
+	}(conn)
+
+	if err := HandleConnection(r, conn, source); err != nil {
+		Log.Errorln("HandleConnection %v", err)
+
+	}
 }
 
-func HandleConnection(r *http.Request, conn *ws.Conn) error {
-	session, err := ProcessConnecting(r, conn)
+func Auth(r *http.Request) (s string, err error) {
+
+	params := GetParams(r)
+
+	s = "D:\\Project\\go\\mirrorc-sync\\tmp\\source"
+	Log.Debugln(params)
+	return
+}
+
+func HandleConnection(r *http.Request, conn *ws.Conn, source string) error {
+	err := ProcessConnecting(r, conn, source)
 	if err != nil {
 		return err
 	}
 
-	return ProcessBinaryMessage(conn, session)
+	return ProcessBinaryMessage(conn, source)
 }
 
-func ProcessConnecting(r *http.Request, m *ws.Conn) (*ServerSession, error) {
-	session := &ServerSession{
-		Id:    ksuid.New().String(),
-		Param: GetParams(r),
-		List:  nil,
-	}
+func ProcessConnecting(r *http.Request, m *ws.Conn, source string) error {
 
-	log.Errorln("Connected: %s\n", session.Id)
+	Log.Debugln("Connected: ", r.RemoteAddr)
 
-	files, err := GetResource(session.Param)
+	files, err := GetResource(source)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	info := &pb.Payload{
 		Code: 0,
-		Msg:  "LST file list",
 		Type: LST,
 		Data: &pb.Payload_File{
 			File: files,
@@ -63,29 +94,29 @@ func ProcessConnecting(r *http.Request, m *ws.Conn) (*ServerSession, error) {
 	}
 
 	if err := util.WriteProtoMessage(m, info); err != nil {
-		log.Errorln("WriteBinary: %v", err)
-		return nil, err
+		Log.Errorln("WriteBinary: %v", err)
+		return err
 	}
 
-	return session, nil
+	return nil
 }
 
-func HandleRequest(c *ws.Conn, data *pb.Payload) error {
-	p := data.GetKey()
-	log.Errorln("HandleRequest path: %v\n", p)
+func HandleRequest(c *ws.Conn, data *pb.Payload, source string) error {
+	key := data.GetKey()
+	Log.Debugln("HandleRequest path: ", key)
 
-	log.Debugln("Receive SIG")
+	Log.Debugln("Receive SIG")
 	table, err := doReceiveSig(c)
 	if err != nil {
 		return err
 	}
 
-	log.Debugln("Send SIG")
-	if err := doSendSyn(c, err, p, table); err != nil {
+	Log.Debugln("Send SIG")
+	if err := doSendSyn(c, source, key, table); err != nil {
 		return err
 	}
 
-	log.Debugln("Send FIN")
+	Log.Debugln("Send FIN")
 	if err := doSendFin(c); err != nil {
 		return err
 	}
@@ -113,10 +144,10 @@ func doReceiveSig(c *ws.Conn) (map[uint32][]syn.BlockSignature, error) {
 	})
 }
 
-func doSendSyn(c *ws.Conn, err error, p string, table map[uint32][]syn.BlockSignature) error {
-	source, err := os.Open(path.Join(SOURCE, p))
+func doSendSyn(c *ws.Conn, s, key string, table map[uint32][]syn.BlockSignature) error {
+	source, err := os.Open(path.Join(s, key))
 	if err != nil {
-		log.Errorln("open file error:", err)
+		Log.Errorln("open file error:", err)
 		return err
 	}
 	defer func(open *os.File) {
@@ -126,10 +157,13 @@ func doSendSyn(c *ws.Conn, err error, p string, table map[uint32][]syn.BlockSign
 		}
 	}(source)
 
-	return syn.Sync(source, md5.New(), table, func(op *syn.BlockOperation) error {
+	//hash := h.GetHash()
+	//hash.Reset()
+	//defer hash.Close()
+
+	return syn.Sync(source, md5.New(), table, func(op syn.BlockOperation) error {
 		info := &pb.Payload{
 			Code: 0,
-			Msg:  "sync file",
 			Type: SYN,
 			Data: &pb.Payload_Operation{
 				Operation: &pb.BlockOperation{
@@ -145,13 +179,12 @@ func doSendSyn(c *ws.Conn, err error, p string, table map[uint32][]syn.BlockSign
 func doSendFin(c *ws.Conn) error {
 	info := &pb.Payload{
 		Code: 0,
-		Msg:  "fin",
 		Type: FIN,
 	}
 	return util.WriteProtoMessage(c, info)
 }
 
-func ProcessBinaryMessage(c *ws.Conn, msg *ServerSession) error {
+func ProcessBinaryMessage(c *ws.Conn, source string) error {
 	for {
 		data, err := util.ReadProtoMessage(c)
 		if err != nil {
@@ -164,9 +197,9 @@ func ProcessBinaryMessage(c *ws.Conn, msg *ServerSession) error {
 		if data.GetType() != REQ {
 			return errors.New("type mismatch")
 		}
-		err = HandleRequest(c, data)
+		err = HandleRequest(c, data, source)
 		if err != nil {
-			log.Errorln("HandleRequest err", err)
+			Log.Errorln("HandleRequest err", err)
 		}
 	}
 }

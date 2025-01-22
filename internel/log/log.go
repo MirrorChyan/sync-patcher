@@ -1,39 +1,32 @@
 package log
 
-import "go.uber.org/zap"
+import (
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"os"
+)
 
-var l *zap.SugaredLogger
+var (
+	Log *zap.SugaredLogger
+)
 
 func InitLogger() {
-
-	level := zap.NewAtomicLevelAt(zap.DebugLevel)
-	logger, err := zap.Config{
-		Level:            level,
-		Development:      true,
-		Encoding:         "console",
-		EncoderConfig:    zap.NewDevelopmentEncoderConfig(),
-		OutputPaths:      []string{"stderr"},
-		ErrorOutputPaths: []string{"stderr"},
-	}.Build()
-
-	if err != nil {
-		panic(err)
-	}
-	l = logger.Sugar()
+	Log = newLogger().Sugar()
 }
 
-func Infoln(msg string, args ...any) {
-	l.Infoln(msg, args)
+func newLogger() *zap.Logger {
+	encoder := getEncoder()
+	core := zapcore.NewCore(
+		encoder,
+		zapcore.AddSync(os.Stdout),
+		zap.DebugLevel,
+	)
+	return zap.New(core, zap.AddCaller())
 }
 
-func Errorln(msg string, args ...any) {
-	l.Errorln(msg, args)
-}
-
-func Debugln(msg string, args ...any) {
-	l.Debugln(msg, args)
-}
-
-func Warnln(msg string, args ...any) {
-	l.Warnln(msg, args)
+func getEncoder() zapcore.Encoder {
+	conf := zap.NewProductionEncoderConfig()
+	conf.TimeKey = "time"
+	conf.EncodeTime = zapcore.ISO8601TimeEncoder
+	return zapcore.NewConsoleEncoder(conf)
 }

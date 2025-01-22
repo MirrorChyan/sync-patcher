@@ -9,7 +9,7 @@ import "sync"
 
 const (
 	// DefaultBlockSize is the default block size.
-	DefaultBlockSize = 6 * 1024 // 6kb
+	DefaultBlockSize = 8 * 1024
 )
 
 var bufferPool = sync.Pool{
