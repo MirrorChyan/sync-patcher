@@ -16,7 +16,7 @@ import (
 // returning channel, closing it when done reading or when the context is cancelled.
 // This function does not block and returns immediately. The caller must make sure the concrete
 // reader instance is not nil or this function will panic.
-func Signatures(r io.Reader, shash hash.Hash, consumer func(*BlockSignature) error) error {
+func Signatures(r io.Reader, h hash.Hash, consumer func(*BlockSignature) error) error {
 	var index uint64
 
 	bfp := bufferPool.Get().(*[]byte)
@@ -27,8 +27,8 @@ func Signatures(r io.Reader, shash hash.Hash, consumer func(*BlockSignature) err
 		return errors.New("reader required")
 	}
 
-	if shash == nil {
-		shash = md5.New()
+	if h == nil {
+		h = md5.New()
 	}
 	for {
 
@@ -42,9 +42,9 @@ func Signatures(r io.Reader, shash hash.Hash, consumer func(*BlockSignature) err
 		}
 
 		block := buffer[:n]
-		shash.Reset()
-		shash.Write(block)
-		strong := shash.Sum(nil)
+		h.Reset()
+		h.Write(block)
+		strong := h.Sum(nil)
 		_, _, rhash := rollingHash(block)
 
 		sig := BlockSignature{
@@ -60,6 +60,19 @@ func Signatures(r io.Reader, shash hash.Hash, consumer func(*BlockSignature) err
 	}
 
 	return nil
+}
+
+func GetTotalSignatures(r io.Reader, h hash.Hash) ([]*BlockSignature, error) {
+	sigs := make([]*BlockSignature, 0)
+	err := Signatures(r, h, func(signature *BlockSignature) error {
+		sigs = append(sigs, signature)
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+	return sigs, nil
 }
 
 // Apply reconstructs a file given a set of operations. The caller must close the ops channel or the context when done or there will be a deadlock.

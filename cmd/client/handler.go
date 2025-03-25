@@ -1,9 +1,13 @@
 package main
 
 import (
+	"crypto/md5"
+	"encoding/json"
 	"errors"
 	ws "github.com/gorilla/websocket"
+	"github.com/panjf2000/ants/v2"
 	"github.com/segmentio/ksuid"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"mirrorc-sync/internel/fs"
 	h "mirrorc-sync/internel/hash"
@@ -16,6 +20,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -78,34 +83,51 @@ func GetPendingFileList(c *ws.Conn) ([]PendingFileInfo, error) {
 	return fs.GetPendingFileList(source, dest), nil
 }
 
+var p, _ = ants.NewPool(10000)
+
 func doSync() {
-	conn, err := EstablishConnection()
+	//conn, err := EstablishConnection()
+	//if err != nil {
+	//	Log.Errorf("Connect to %v server error", GConf.Server)
+	//	Log.Errorln(err.Error())
+	//	return
+	//}
+	//defer func(c *ws.Conn) {
+	//	_ = c.WriteControl(
+	//		ws.CloseMessage,
+	//		ws.FormatCloseMessage(ws.CloseNormalClosure, ""),
+	//		time.Now().Add(time.Second*5),
+	//	)
+	//	_ = c.Close()
+	//}(conn)
+
+	//list, err := GetPendingFileList(conn)
+	//if err != nil {
+	//	Log.Errorln("GetPendingFileList ", err)
+	//	return
+	//}
+
+	l, err := fs.CollectFileList(GConf.Dest)
 	if err != nil {
-		Log.Errorf("Connect to %v server error", GConf.Server)
-		Log.Errorln(err.Error())
+		Log.Errorln("CollectFileList error", err)
 		return
 	}
-	defer func(c *ws.Conn) {
-		_ = c.WriteControl(
-			ws.CloseMessage,
-			ws.FormatCloseMessage(ws.CloseNormalClosure, ""),
-			time.Now().Add(time.Second*5),
-		)
-		_ = c.Close()
-	}(conn)
-
-	list, err := GetPendingFileList(conn)
-	if err != nil {
-		Log.Errorln("GetPendingFileList ", err)
-		return
+	var list []PendingFileInfo
+	for k, fp := range l {
+		list = append(list, PendingFileInfo{
+			Path:    k,
+			Attr:    fp.Attr,
+			Exist:   true,
+			ModTime: fp.ModTime,
+		})
 	}
 
 	var (
-		fList = list
+		fList []PendingFileInfo
 	)
 
-	for _, fp := range fList {
-		Log.Debugln("sync file :", fp.Path, fp.Exist, fp.Attr)
+	for _, fp := range list {
+		//Log.Debugln("sync file :", fp.Path, fp.Exist, fp.Attr)
 		if fp.Attr != TFile {
 			err := os.MkdirAll(path.Join(GConf.Dest, fp.Path), os.ModePerm)
 			if err != nil {
@@ -114,12 +136,79 @@ func doSync() {
 			}
 			continue
 		}
-
-		if err := SyncFile(fp, conn); err != nil {
-			Log.Errorln("SyncFile error", err)
-			return
-		}
+		fList = append(fList, fp)
 	}
+	group := errgroup.Group{}
+	group.SetLimit(10)
+	errFlag := atomic.Bool{}
+	errFlag.Store(false)
+	signatureList := make([][]*syn.BlockSignature, len(fList))
+
+	for i := range fList {
+		if errFlag.Load() {
+			break
+		}
+		group.Go(func() error {
+			f := fList[i]
+			fp := path.Join(GConf.Dest, f.Path)
+			_, err := os.Stat(fp)
+			if err != nil {
+				if os.IsNotExist(err) {
+					Log.Debugln("File Not Exist")
+					return nil
+				}
+				Log.Errorln("stat error", err)
+				return err
+			}
+
+			file, err := os.Open(fp)
+			if err != nil {
+				Log.Errorln("Open File Error", err)
+				return err
+			}
+			defer func(f *os.File) {
+				if err := f.Close(); err != nil {
+					Log.Warn("Close File Error")
+				}
+			}(file)
+			signatures, err := syn.GetTotalSignatures(file, md5.New())
+			if err != nil {
+				Log.Errorln("GetTotalSignatures error", err)
+				return err
+			}
+			signatureList[i] = signatures
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		Log.Errorln("SyncFile error", err)
+	}
+
+	Log.Debugln("Len ", len(fList), "Len2 ", len(signatureList))
+	marshal, _ := json.Marshal(signatureList)
+	//compress, err := util.ZstdCompress(marshal)
+	//if err != nil {
+	//	Log.Errorln("ZstdCompress Err")
+	//}
+	os.WriteFile("test.json", marshal, 0666)
+	file, err := os.ReadFile("test.json")
+	if err != nil {
+		Log.Errorln("ReadFile")
+		return
+	}
+
+	var ss [][]*syn.BlockSignature
+
+	err = json.Unmarshal(file, &ss)
+	if err != nil {
+		Log.Errorln("Unmarshal")
+	}
+	Log.Debugln("Len3 ", len(ss))
+
+	//if err := SyncFile(fp, conn); err != nil {
+	//	Log.Errorln("SyncFile error", err)
+	//	return
+	//}
 }
 
 func SyncFile(f PendingFileInfo, c *ws.Conn) error {
@@ -129,6 +218,9 @@ func SyncFile(f PendingFileInfo, c *ws.Conn) error {
 	}
 
 	destPath := path.Join(GConf.Dest, f.Path)
+	if f.Exist {
+
+	}
 	origin, err := os.OpenFile(destPath, os.O_RDONLY|os.O_CREATE, os.ModePerm)
 	if err != nil {
 		Log.Errorln("OpenFile error", err)
@@ -138,6 +230,7 @@ func SyncFile(f PendingFileInfo, c *ws.Conn) error {
 	hash := h.GetHash()
 	defer hash.Close()
 
+	// SIG
 	err = syn.Signatures(origin, hash, func(sig *syn.BlockSignature) error {
 		data := &pb.Payload{
 			Code: 0,
@@ -161,6 +254,7 @@ func SyncFile(f PendingFileInfo, c *ws.Conn) error {
 		return err
 	}
 
+	// DONE
 	data = &pb.Payload{
 		Code: 0,
 		Type: DONE,
@@ -183,6 +277,7 @@ func SyncFile(f PendingFileInfo, c *ws.Conn) error {
 		return err
 	}
 
+	// SYN
 	err = syn.Apply(dest, origin, func() (*syn.BlockOperation, error) {
 		payload, err := util.ReadProtoMessage(c)
 		if err != nil {

@@ -6,13 +6,12 @@ import (
 	. "mirrorc-sync/internel/log"
 	"net/http"
 	_ "net/http/pprof"
+	"time"
 )
 
 // todo: remove this
 func debug() {
-	GConf.Server = "ws://127.0.0.1:5000"
-	GConf.Dest = "D:\\Project\\go\\mirrorc-sync\\tmp\\dest"
-	GConf.SSL = false
+
 }
 
 func main() {
@@ -23,5 +22,7 @@ func main() {
 	h.StartHash()
 	InitLogger()
 	debug()
+	ts := time.Now()
 	doSync()
+	Log.Infof("Sync End %v ms", time.Now().Sub(ts).Milliseconds())
 }

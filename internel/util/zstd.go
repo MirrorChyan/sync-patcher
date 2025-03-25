@@ -33,9 +33,9 @@ var (
 func processSendPayload(data *pb.Payload) error {
 	if data.Type == shared.SYN && len(data.GetOperation().Data) > 0 {
 		op := data.GetOperation()
-		payload, err := compressBlockPayload(op.Data)
+		payload, err := ZstdCompress(op.Data)
 		if err != nil {
-			Log.Errorln("compressBlockPayload", err)
+			Log.Errorln("ZstdCompress", err)
 			return err
 		}
 		op.Data = payload
@@ -46,9 +46,9 @@ func processSendPayload(data *pb.Payload) error {
 func processReceivePayload(data *pb.Payload) error {
 	if data.Type == shared.SYN && len(data.GetOperation().Data) > 0 {
 		op := data.GetOperation()
-		payload, err := decompressBlockPayload(op.Data)
+		payload, err := ZstdDecompress(op.Data)
 		if err != nil {
-			Log.Errorln("compressBlockPayload", err)
+			Log.Errorln("ZstdCompress", err)
 			return err
 		}
 		op.Data = payload
@@ -56,7 +56,7 @@ func processReceivePayload(data *pb.Payload) error {
 	return nil
 }
 
-func compressBlockPayload(buf []byte) ([]byte, error) {
+func ZstdCompress(buf []byte) ([]byte, error) {
 
 	buffer := bytes.NewBuffer(nil)
 	writer := encoderPool.Get().(*zstd.Encoder)
@@ -76,7 +76,7 @@ func compressBlockPayload(buf []byte) ([]byte, error) {
 	return buffer.Bytes(), nil
 }
 
-func decompressBlockPayload(buf []byte) ([]byte, error) {
+func ZstdDecompress(buf []byte) ([]byte, error) {
 	decoder := decoderPool.Get().(*zstd.Decoder)
 	defer decoderPool.Put(decoder)
 
